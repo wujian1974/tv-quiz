@@ -1,0 +1,28 @@
+{
+  "_note_setup": "把本文件复制为 config.json，再把 tv_ip 改成你电视的 IP（电视 设置→关于→网络信息）。重新生成错题库部分时，可在 config.json 里加 cards_dir 指向自己的错题卡目录。",
+  "tv_ip": "192.168.1.100:5555",
+  "bili_packages": [
+    "com.xiaodianshi.tv.yst"
+  ],
+  "interval_minutes": 5,
+  "poll_seconds": 3,
+  "gate_on_enter": true,
+  "gate_cooldown_seconds": 0,
+  "gate_leave_grace_seconds": 8,
+  "gate_require_correct": false,
+  "gate_timeout_seconds": 90,
+  "pause_on_quiz": false,
+  "resume_after_quiz": true,
+  "offline_alert_seconds": 90,
+  "textbook_units": [
+    "五上语文1-4单元",
+    "五上数学1-4单元",
+    "五上英语Unit1-3"
+  ],
+  "_note_bili": "云视听小电视的真实包名是 com.xiaodianshi.tv.yst（aapt 读到应用名「云视听小电视」1.8.9）。之前误填的 com.bilibili.tv 应用名其实是「哔哩哔哩」1.6.6，是另一个官方 TV 客户端；com.chinasoul.bt 叫「BT」，是第三方客户端。按用户要求只认云视听小电视；若小朋友也会开另外两个，把包名加进 bili_packages 即可。",
+  "_note_gate": "gate_on_enter：从别的应用切进云视听小电视时，先弹一道题，没作答就把答题页反复拉回前台，答完才放行并开始计时。gate_cooldown_seconds=0：每次真正进入都弹题；冷却按「上次答完题」算，不再按「上次离开」算（后者被来回切换不断刷新，2026-11-12 实测会导致进门不弹题，已修）；若觉得太频繁可改大，例如 60。gate_leave_grace_seconds=8：连续离开不足 8 秒不算真离开，用来过滤启动画面、播放器切屏的抖动，避免每答完一道题就又设闸。gate_require_correct：默认 false，答完就放行；改成 true 则必须答对才放行（最多换 3 道题）。",
+  "_note_resume": "pause_on_quiz=false：不额外发暂停键，切到答题页时播放器自己会停。resume_after_quiz=true：答题页关闭、回到云视听小电视后自动发播放键续播。",
+  "_note_units": "教材题按单元标注；进度往前走了，把新单元名加进 textbook_units 再重跑 tools/build_questions.py 即可。目前不含语文 5-8 单元、数学第 5 单元（简易方程）及英语 Unit 4-6。",
+  "_note_offline": "offline_alert_seconds：电视连不上超过这个秒数，就判定可能不是普通息屏，而是重启后 ADB 调试被关掉了，守护脚本会明确报警并写 STATUS.json。此时进门闸门和计时题都不生效，需要到电视 设置→帐号与安全→ADB调试 重新打开。双击 check_adb.bat 可随时自检。注意：现已装好电视端 ADB 自恢复，多数情况下 20 秒内会自动连回，只有恢复失败才需要人工打开开关。",
+  "_note_adb_keeper": "电视端答题 APK（v1.3）内置 AdbKeeper：开机广播后分 20/60/120/180 秒把 adb_enabled 写回 1，并每 5 分钟链式自检；电脑端守护每次连上电视、以及每 10 分钟都会主动发一次 ADB_BOOTTEST 广播保活。WRITE_SECURE_SETTINGS 已用 pm grant 授予，实测把开关写成 0 后 18 秒自动恢复。以后重编/换 APK 后需重跑 tools/setup_adb_keeper.py 重新授权并唤醒。"
+}

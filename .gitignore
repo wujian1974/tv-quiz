@@ -1,0 +1,71 @@
+# 这个仓库采用「白名单」策略：默认忽略一切，只显式放行下面列出的公开文件。
+# 目的是防止把 APK 签名私钥、家里电视的内网 IP、孩子的答题记录/录屏、
+# 运行日志、设备信息和 1.1G 的本地工具链误提交上去。
+# 以后要新增公开文件，请在这里加一行 !文件名。
+
+*
+!*/
+
+# 文档与元信息
+!.gitignore
+!README.md
+!LICENSE
+!config.example.json
+
+# 题库与预览
+!questions.json
+!quiz_items.json
+!textbook_items.json
+!preview.html
+!preview_data.js
+
+# 电脑端 Python 工具
+!tools/
+tools/*
+!tools/build_questions.py
+!tools/build_tv_apk.py
+!tools/tv_quiz_daemon.py
+!tools/setup_toolchain.py
+!tools/verify_toolchain.py
+!tools/setup_adb_keeper.py
+!tools/check_adb.py
+!tools/watch_reboot.py
+!tools/test_adb_selfheal.py
+!tools/probe_tv.py
+!tools/tv_remote_test.py
+!tools/e2e_test.py
+!tools/test_gate_e2e.py
+!tools/verify_live_gate.py
+!tools/inspect_bili_apps.py
+
+# 电视端 Java 源码与 Manifest（便于直接阅读）
+!android/
+!android/**
+
+# Windows 启动脚本模板
+!windows/
+!windows/**
+
+# 明确点名，双重保险：这些永远不要进版本库
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+*.apk
+*.idsig
+*.log
+config.json
+STATUS.json
+answer_log.jsonl
+quiz_history.json
+tv_probe.json
+tv_shot*.png
+ima_source.md
+cards_dump.txt
+toolchain/
+tmp_video/
+tmp_labels/
+apk/
+apk-smoke/
+__pycache__/

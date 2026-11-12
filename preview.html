@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>小米电视答题界面 · 电脑预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:#0b1220; color:#f2f6ff; font-family:"Microsoft YaHei","PingFang SC",sans-serif; padding:24px; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  h1 { font-size:18px; font-weight:500; margin-bottom:6px; }
+  .sub { font-size:13px; color:#9db0cc; margin-bottom:16px; line-height:1.7; }
+  .tv { background:#101a2c; border:2px solid #2c3f5e; border-radius:14px; overflow:hidden; }
+  .topbar { display:flex; align-items:center; gap:14px; padding:14px 24px; background:#17243c; border-bottom:1px solid #2c3f5e; font-size:15px; }
+  .tag { background:#2456a6; padding:4px 12px; border-radius:5px; font-size:14px; }
+  .tag.review { background:#8a5a12; }
+  .grow { flex:1; }
+  .stat { color:#9db0cc; font-size:14px; }
+  .screen { height:520px; padding:26px 34px; display:flex; flex-direction:column; }
+  .hidden { display:none !important; }
+  .video { align-items:center; justify-content:center; text-align:center; gap:18px; }
+  .video .app { font-size:16px; color:#9db0cc; letter-spacing:2px; }
+  .video .box { width:150px; height:110px; border:3px solid #3d5c8c; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:40px; color:#3d5c8c; }
+  .video .title { font-size:22px; }
+  .video .clock { font-size:30px; color:#7fb2ff; font-variant-numeric:tabular-nums; }
+  .btn { font-family:inherit; font-size:15px; padding:9px 18px; border-radius:7px; border:1px solid #3d5c8c; background:#1c2e4d; color:#f2f6ff; cursor:pointer; }
+  .btn:hover { background:#2456a6; }
+  .stem { font-size:26px; line-height:1.65; max-height:210px; overflow:auto; margin-bottom:22px; white-space:pre-wrap; }
+  .opts { display:grid; grid-template-columns:1fr 1fr; gap:16px; flex:1; }
+  .opt { font-family:inherit; text-align:left; font-size:22px; line-height:1.45; padding:18px 22px; border:3px solid #33486b; border-radius:10px; background:#18263f; color:#f2f6ff; cursor:pointer; display:flex; align-items:center; gap:14px; }
+  .opt .k { display:inline-flex; width:34px; height:34px; flex:none; align-items:center; justify-content:center; border-radius:6px; background:#2a3f63; font-size:17px; }
+  .opt.focus { border-color:#6fa8ff; background:#21447d; box-shadow:inset 0 0 0 1px #6fa8ff; }
+  .opt.right { border-color:#39b37a; background:#174a37; }
+  .opt.wrong { border-color:#e06060; background:#4d2020; }
+  .opt:disabled { cursor:default; }
+  .feedback { margin-top:16px; font-size:17px; line-height:1.6; min-height:56px; color:#cfdcF2; }
+  .feedback b { color:#7fe0ac; }
+  .feedback .bad { color:#ff9b9b; }
+  .feedback .origin { margin-top:8px; font-size:14px; line-height:1.5; color:#8fa3c2; }
+  .hint { padding:12px 24px; background:#17243c; border-top:1px solid #2c3f5e; font-size:13px; color:#9db0cc; display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .hint kbd { background:#26395a; border:1px solid #43608e; border-radius:4px; padding:2px 7px; color:#e6efff; font-family:inherit; }
+  .hint label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .note { margin-top:14px; font-size:13px; color:#8fa3c2; line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>小米电视 · 看视频定时答题（电脑预览）</h1>
+  <p class="sub" id="subline">电视上会出现的画面。键盘方向键 + 回车 = 遥控器方向键 + 确定键。</p>
+
+  <div class="tv">
+    <div class="topbar">
+      <span id="tag" class="tag">数学</span>
+      <span id="progress" class="stat">准备中</span>
+      <span class="grow"></span>
+      <span id="score" class="stat">已答 0 题 · 对 0 · 错 0</span>
+    </div>
+
+    <div id="video" class="screen video">
+      <div class="app">云视听小电视 · 正在播放</div>
+      <div class="box">&#9654;</div>
+      <div class="title">小朋友正在看视频</div>
+      <div id="clock" class="clock">距离下一题 05:00</div>
+      <div style="display:flex;gap:12px">
+        <button class="btn" id="pop">立即弹题（演示）</button>
+        <button class="btn" id="fast">倒计时加速 ×60</button>
+      </div>
+    </div>
+
+    <div id="quiz" class="screen hidden">
+      <div id="stem" class="stem"></div>
+      <div id="opts" class="opts"></div>
+      <div id="feedback" class="feedback"></div>
+    </div>
+
+    <div class="hint">
+      <span><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> 移动焦点</span>
+      <span><kbd>Enter</kbd> 确认 / 继续</span>
+      <span><kbd>Backspace</kbd> 回到视频</span>
+      <label><input type="checkbox" id="showOrigin" checked> 答题后显示干扰项来源</label>
+    </div>
+  </div>
+
+  <p class="note">
+    题库分两部分：错题库里 3 道原卷自带的选择题 + 22 道把填空、计算、阅读题改成的四选一；另有按 ima 资料库五年级上册教材补的语文、数学、英语题（只取已学单元）。正确项一律取自错题卡或教材原文，干扰项优先用孩子当时写错的答案，来源逐题记在 opt_from 里，答题后可展开查看。<br>
+    两道写话题的「正确项」是参考例文，属开放性答案，比的是具体、得体，不是唯一解。<br>
+    进门先做一道题才能看节目，之后每 5 分钟一道；答完自动续播。原卷照片一律不上电视——上面有孩子的作答和老师红笔勾叉，等于把答案摆在眼前，这是错题卡 SOP 里定下的规矩。
+  </p>
+</div>
+
+<script src="preview_data.js"></script>
+<script>
+(function () {
+  var DATA = window.QUIZ_DATA || { questions: [] };
+  var KEYS = ['A', 'B', 'C', 'D'];
+  var state = 'video', focus = 0, current = null, rightIndex = 0, locked = false;
+  var left = 300, speed = 1, answered = 0, correct = 0, timer = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var elVideo = $('video'), elQuiz = $('quiz'), elStem = $('stem'), elOpts = $('opts');
+  var elFeedback = $('feedback'), elTag = $('tag'), elProgress = $('progress');
+  var elScore = $('score'), elClock = $('clock');
+
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  function pool() {
+    return DATA.questions.filter(function (q) { return q.enabled; });
+  }
+
+  function tick() {
+    if (state !== 'video') return;
+    left -= speed;
+    if (left <= 0) { left = 300; speed = 1; popQuiz(); return; }
+    var m = Math.floor(left / 60), s = left % 60;
+    elClock.textContent = '距离下一题 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function showVideo() {
+    state = 'video'; locked = false;
+    elVideo.classList.remove('hidden');
+    elQuiz.classList.add('hidden');
+    elProgress.textContent = '看视频中 · 题库 ' + pool().length + ' 道';
+    elTag.textContent = '播放';
+    elTag.className = 'tag';
+    clearTimeout(timer);
+  }
+
+  function popQuiz() {
+    var list = pool();
+    if (!list.length) { alert('题库里没有可抽的题'); return; }
+    var q = list[Math.floor(Math.random() * list.length)];
+    var pairs = q.options.map(function (text, i) { return { text: text, right: i === q.answer_index }; });
+    pairs = shuffle(pairs);
+    current = q;
+    rightIndex = pairs.findIndex(function (p) { return p.right; });
+    state = 'quiz'; locked = false; focus = 0;
+    left = 300; speed = 1;
+    $('fast').textContent = '倒计时加速 ×60';
+
+    elVideo.classList.add('hidden');
+    elQuiz.classList.remove('hidden');
+    elTag.textContent = q.subject + (q.level === 'original' ? ' · 原题' : ' · 改造');
+    elTag.className = 'tag';
+    elProgress.textContent = '第 ' + (answered + 1) + ' 题 / 共 ' + pool().length + ' 题 · ' + q.id;
+    elStem.textContent = q.stem;
+    elFeedback.innerHTML = '';
+    elOpts.innerHTML = '';
+
+    pairs.forEach(function (p, i) {
+      var b = document.createElement('button');
+      b.className = 'opt';
+      b.innerHTML = '<span class="k">' + KEYS[i] + '</span><span></span>';
+      b.lastChild.textContent = p.text;
+      b.onclick = function () { if (!locked) { focus = i; paintFocus(); submit(); } };
+      elOpts.appendChild(b);
+    });
+    paintFocus();
+    clearTimeout(timer);
+  }
+
+  function paintFocus() {
+    var bs = elOpts.children;
+    for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('focus', i === focus && !locked);
+  }
+
+  function submit() {
+    locked = true;
+    var bs = elOpts.children;
+    for (var i = 0; i < bs.length; i++) {
+      bs[i].disabled = true;
+      bs[i].classList.remove('focus');
+      if (i === rightIndex) bs[i].classList.add('right');
+      else if (i === focus) bs[i].classList.add('wrong');
+    }
+    answered++;
+    var ok = focus === rightIndex;
+    if (ok) correct++;
+    elScore.textContent = '已答 ' + answered + ' 题 · 对 ' + correct + ' · 错 ' + (answered - correct);
+    var explain = (current.explain || '').replace(/\s+/g, ' ').slice(0, 110);
+    var origin = ($('showOrigin').checked && current.opt_from)
+      ? '<div class="origin">干扰项来源：' + current.opt_from + (current.open_ended ? '　（开放题，参考答案非唯一解）' : '') + '</div>'
+      : '';
+    elFeedback.innerHTML = (ok ? '<b>答对了</b>　' : '<span class="bad">答错了，正确答案：' + KEYS[rightIndex] + '</span>　') + explain + '…' + origin;
+    state = 'feedback';
+    timer = setTimeout(showVideo, 3200);
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Backspace') { showVideo(); e.preventDefault(); return; }
+    if (state === 'video') {
+      if (e.key === 'Enter') { popQuiz(); e.preventDefault(); }
+      return;
+    }
+    if (state === 'feedback') {
+      if (e.key === 'Enter' || e.key === ' ') { clearTimeout(timer); showVideo(); }
+      e.preventDefault();
+      return;
+    }
+    var map = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 2, ArrowUp: -2 };
+    if (e.key in map) {
+      var n = focus + map[e.key];
+      if (n >= 0 && n <= 3) focus = n;
+      paintFocus(); e.preventDefault();
+    } else if (e.key >= '1' && e.key <= '4') {
+      focus = Number(e.key) - 1; paintFocus(); submit(); e.preventDefault();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      submit(); e.preventDefault();
+    }
+  });
+
+  $('pop').onclick = popQuiz;
+  $('fast').onclick = function () { speed = speed === 1 ? 60 : 1; this.textContent = speed === 1 ? '倒计时加速 ×60' : '恢复常速'; };
+  $('subline').textContent = '电视上会出现的画面。键盘方向键 + 回车 = 遥控器方向键 + 确定键。题库来自错题库 + ima 五上教材，共 ' + pool().length + ' 道四选一；进门先答一道，之后每 5 分钟一道。';
+  if (!DATA.questions || !DATA.questions.length) {
+    document.querySelector('.video .title').textContent = '题库数据未加载';
+    document.querySelector('.video .clock').textContent = '请确认 preview_data.js 与 preview.html 在同一目录';
+  }
+  showVideo();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
