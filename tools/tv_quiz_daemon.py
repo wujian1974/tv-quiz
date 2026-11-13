@@ -26,6 +26,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -49,6 +50,23 @@ GATE_LEAVE_GRACE = int(CONF.get("gate_leave_grace_seconds", 8))
 RESUME_AFTER = bool(CONF.get("resume_after_quiz", True))
 PAUSE_ON_QUIZ = bool(CONF.get("pause_on_quiz", False))
 OFFLINE_ALERT = int(CONF.get("offline_alert_seconds", 90))
+
+# 小米/Redmi 电视自带的局域网控制服务（6095 端口），独立于 ADB。
+# 电视开机把「ADB调试」关掉后，5555 不通但 6095 仍在线，可以用它把答题应用
+# 拉起来 —— 应用一启动就会把 adb_enabled 写回 1，等于一条不依赖 ADB 的自愈通道。
+ASSISTANT_BASE = "http://" + TARGET.split(":")[0] + ":6095"
+REVIVE_ENABLED = bool(CONF.get("adb_revive_via_assistant", True))
+REVIVE_AFTER = int(CONF.get("adb_revive_after_offline_seconds", 60))
+REVIVE_RETRY = int(CONF.get("adb_revive_retry_seconds", 60))
+
+# 防 CEC 自动切源：关掉「直接播放信号源」之后仍可能被功放切走，
+# 重连后的一段时间内，发现活动源变成外部 HDMI 就自动回电视桌面。
+CEC_GUARD = bool(CONF.get("cec_guard_enabled", True))
+CEC_GUARD_WINDOW = int(CONF.get("cec_guard_after_reconnect_seconds", 600))
+CEC_GUARD_POLL = int(CONF.get("cec_guard_poll_seconds", 12))
+# 设置界面「通用设置 → 直接播放信号源」对应的全局键：关掉后外接设备开机
+# 不再把画面切过去，但 CEC 总开关、ARC/eARC 音频和功放联动开机都保留。
+CEC_AUTO_SWITCH_KEY = "mitv.settings.db.video.auto_switch"
 
 LOG = ROOT / "daemon.log"
 STATUS_FILE = ROOT / "STATUS.json"
@@ -138,6 +156,55 @@ def connect():
 
 def shell(cmd, timeout=30):
     return run(["shell", cmd], timeout)
+
+
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def assistant_get(path, timeout=4):
+    """请求电视 6095 控制接口；强制不走系统代理，失败返回空串。"""
+    try:
+        req = urllib.request.Request(
+            ASSISTANT_BASE + path, headers={"User-Agent": "tv-quiz-daemon"})
+        with _NO_PROXY_OPENER.open(req, timeout=timeout) as r:
+            return r.read(4096).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def assistant_alive():
+    return '"status":0' in assistant_get("/request?action=isalive", 3)
+
+
+def revive_adb_via_assistant():
+    """5555 不通时，靠 6095 拉起答题应用，由它把 ADB 开关写回 1。
+
+    实测（2026-11-13）：开机后 5555 拒绝连接、6095 仍应答；
+    发出 startapp 后 3 秒 adb_enabled=1、adbd=running。
+    """
+    if not assistant_alive():
+        return False
+    assistant_get("/controller?action=startapp&type=packagename&packagename="
+                  + QUIZ_PKG, 5)
+    return True
+
+
+def ensure_cec_setting():
+    """连上电视时确认「直接播放信号源」仍为关；被系统还原就写回去。"""
+    if not CEC_GUARD:
+        return
+    cur = shell("settings get global " + CEC_AUTO_SWITCH_KEY, timeout=10).strip()
+    if cur and cur != "0":
+        shell("settings put global " + CEC_AUTO_SWITCH_KEY + " 0", timeout=10)
+        note("「直接播放信号源」被还原为 %s，已重新关掉" % cur)
+
+
+def cec_routing_path():
+    """返回 HDMI-CEC 当前活动路由；0x0000 表示电视自己，非 0 是外部设备。"""
+    out = shell("dumpsys hdmi_control | grep mActiveRoutingPath | head -n 1",
+                timeout=12)
+    m = re.search(r"0x[0-9a-fA-F]+", out)
+    return m.group(0) if m else ""
 
 
 def wake_keeper():
@@ -325,10 +392,15 @@ def main():
             "/".join(BILI_PACKAGES), args.dry_run))
     note("闸门配置：冷却 %d 秒（按上次答完题算）、离开宽限 %d 秒"
          % (GATE_COOLDOWN, GATE_LEAVE_GRACE))
-    if connect():
+    note("自愈配置：6095 通道=%s（离线 %d 秒后启用，每 %d 秒重试）、防 CEC 切源=%s（重连后 %d 秒窗口）"
+         % (REVIVE_ENABLED, REVIVE_AFTER, REVIVE_RETRY,
+            CEC_GUARD, CEC_GUARD_WINDOW))
+    online_at_start = connect()
+    if online_at_start:
         set_status("online", "电视已连接，进门闸门与计时题正常工作")
         note("电视在线：" + TARGET)
         wake_keeper()
+        ensure_cec_setting()
     else:
         set_status("offline", "守护启动时电视就不在线，正在等待")
         note("守护启动时电视不在线，持续等待")
@@ -342,6 +414,11 @@ def main():
     pending_retry = 0
     resume_deadline = 0.0
     last_wake = time.time()   # 上次唤醒电视端 ADB 自恢复闹钟的时间
+    last_revive = 0.0         # 上次通过 6095 尝试拉起应用的时间
+    revive_pending = False    # 刚拉起应用，恢复在线后要收掉临时答题页
+    # 守护启动时就在线，也算一个「开机/刚连上」的会话起点，同样给一段防切源保护窗口
+    reconnected_at = time.time() if online_at_start else 0.0
+    last_cec_check = 0.0      # 上次查 HDMI-CEC 活动源的时间
     in_bili = False           # 是否处在这一次「看 B 站」的会话里
     last_exit = 0.0           # 上次真正离开 B 站的时间
     leave_since = 0.0         # 连续离开的起点（宽限期内不算真离开）
@@ -377,6 +454,15 @@ def main():
                 elif offline_alerted and now - last_offline_notice >= 60:
                     last_offline_notice = now
                     note("!! 电视仍离线（已 %.0f 秒），闸门未生效" % waited)
+                # 不依赖 ADB 的自愈：6095 在线就拉起答题应用，让它把 ADB 写回 1。
+                # 电视真关机时 6095 也不通，这里会安静跳过，不弹题、不打扰。
+                if (REVIVE_ENABLED and not args.dry_run
+                        and waited >= REVIVE_AFTER
+                        and now - last_revive >= REVIVE_RETRY):
+                    last_revive = now
+                    if revive_adb_via_assistant():
+                        revive_pending = True
+                        note("6095 在线但 ADB 不通：已拉起答题应用，等它把 ADB 调试写回开")
                 continue
             if offline_since is not None:
                 note("电视重新连上，等待 %.0f 秒" % (now - offline_since))
@@ -385,11 +471,33 @@ def main():
                 offline_alerted = False
                 last_tick = time.time()   # 别把离线时间算成观看时间
                 wake_keeper()             # 刚开机回来，立刻排好自检闹钟
+                ensure_cec_setting()      # 开机可能把「直接播放信号源」还原，写回关
                 last_wake = now
+                reconnected_at = now      # 开机/唤醒后的 CEC 保护窗口从这里起算
+                last_cec_check = 0.0
+            if revive_pending:
+                # 为恢复 ADB 拉起的应用会显示一道没有 session 的空白题，收掉它，
+                # 免得挡着用户；只有前台确实还是答题页时才发 HOME。
+                revive_pending = False
+                if foreground() == QUIZ_PKG:
+                    shell("input keyevent 3")
+                    note("已收掉用于恢复 ADB 的临时答题页")
 
             if now - last_wake >= 600:    # 每 10 分钟保活一次，防止闹钟链断掉
                 wake_keeper()
                 last_wake = now
+
+            # 防 CEC 自动切源：功放开机发 Active Source 会把活动源抢到它的 HDMI 口，
+            # 这时按一次主页键回到电视自己的界面。只在重连后的窗口内生效，
+            # 且只在活动源确实不是电视自己时才动手，平时完全不干预。
+            if (CEC_GUARD and not args.dry_run and reconnected_at
+                    and now - reconnected_at <= CEC_GUARD_WINDOW
+                    and now - last_cec_check >= CEC_GUARD_POLL):
+                last_cec_check = now
+                path = cec_routing_path()
+                if path and path.lower() not in ("0x0000", "0x0"):
+                    note("CEC 把活动源切到外接设备（routing=%s），自动回电视桌面" % path)
+                    shell("input keyevent 3")
 
             fg = foreground()
             watching = fg in BILI_PACKAGES

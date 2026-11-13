@@ -42,6 +42,7 @@ flowchart LR
 | `tools/setup_adb_keeper.py` | 安装 APK、授予 `WRITE_SECURE_SETTINGS`、唤醒自恢复 |
 | `tools/build_questions.py` | 把错题卡 + 教材题合并成 `questions.json` |
 | `tools/check_adb.py`、`watch_reboot.py`、`test_adb_selfheal.py` | ADB 状态自检、重启监视、自愈实验 |
+| `tools/cec_diag.py`、`watch_cec_boot.py` | HDMI-CEC 只读诊断、真实开机验收 |
 | `tools/verify_live_gate.py` 等 | 真机端到端验证（进门题、续播、遥控器） |
 | `android/` | 电视端 Java 源码与 `AndroidManifest.xml`，便于直接阅读 |
 | `questions.json` | 85 道四选一题库；`quiz_items.json` / `textbook_items.json` 是改造表 |
@@ -107,6 +108,12 @@ python tools/tv_quiz_daemon.py
 | `resume_after_quiz` | `true` | 答完自动发播放键续播 |
 | `pause_on_quiz` | `false` | 不额外发暂停键，切到答题页时播放器自己会停 |
 | `offline_alert_seconds` | `90` | 断连超过这个秒数就报警，写 `STATUS.json` 并弹提示 |
+| `adb_revive_via_assistant` | `true` | 用小米电视 6095 端口自动恢复 ADB；非小米 / Android TV 机型请关掉 |
+| `adb_revive_after_offline_seconds` | `60` | 离线多久后启用 6095 通道 |
+| `adb_revive_retry_seconds` | `60` | 6095 拉起重试间隔 |
+| `cec_guard_enabled` | `true` | 防止功放开机把画面切到 HDMI 界面 |
+| `cec_guard_after_reconnect_seconds` | `600` | 重连后多长时间内开启防切源保护 |
+| `cec_guard_poll_seconds` | `12` | 检查 HDMI-CEC 活动源的间隔 |
 | `textbook_units` | 五上语文 1-4 / 数学 1-4 / 英语 Unit1-3 | 教材题按单元限定「已学到哪儿」，进度往前走就往里加 |
 
 > 一个踩过的坑：冷却期原先按「上次离开」算，结果电视在 B 站和桌面之间来回切时这个时间被不断刷新，正经的进门反而永远不弹题。现在改成按「上次答完题」算，并默认冷却为 0。
@@ -128,15 +135,27 @@ python tools/tv_quiz_daemon.py
 
 ## ADB 自恢复
 
-小米电视重启后，系统往往在开机约 1 分钟时把网络 ADB 再关一次，端口直接消失，电脑端再怎么重连都没用。项目用三层兜底：
+小米电视重启后，系统往往在开机约 1 分钟时把网络 ADB 再关一次，端口直接消失，电脑端再怎么重连都没用。项目用四层兜底：
 
 1. **电视端 `AdbKeeper`**：监听 `BOOT_COMPLETED` / `QUICKBOOT_POWERON` / MIUI 开机广播，在开机后 20/60/120/180 秒把 `Settings.Global.ADB_ENABLED` 写回 1；之后每 5 分钟链式自检。需要 `WRITE_SECURE_SETTINGS`（用 `pm grant` 授予）。
 2. **电脑端守护**：每次连上电视时发一次 `ADB_BOOTTEST` 广播唤醒接收器，之后每 10 分钟保活一次；断线自动重连。
 3. **APK 自身**：每次打开答题页也会 `kick()` 一次自恢复。
+4. **6095 通道（不依赖 ADB）**：小米/Redmi 电视在 6095 端口有独立的局域网控制服务。开机后即使 5555 完全拒绝连接，守护也会请求 `/controller?action=startapp` 把答题应用拉起来；应用一启动就把 `adb_enabled` 写回 1，ADB 自动回来。**这一层解决了「开机广播没赶上、守护又连不上」的死结**，全程不用人到电视上开开关。Android TV / Google TV 机型没有这个端口，把 `adb_revive_via_assistant` 设为 `false` 即可。
 
-实测把 `adb_enabled` 写成 0 后约 18 秒自动恢复；一次完整重启中，端口在 +42 秒恢复、+61 秒被系统关掉、+110 秒自行回来，此后连续在线，全程没有人工去电视上开开关。
+实测把 `adb_enabled` 写成 0 后约 18 秒自动恢复；一次完整重启中，端口在 +42 秒恢复、+61 秒被系统关掉、+110 秒自行回来，此后连续在线。2026-11-13 另一次开机中 5555 一直拒绝连接，靠 6095 拉起应用后 3 秒恢复。
 
-`tools/watch_reboot.py --settle 180` 可以复现并监视整个过程；`tools/test_adb_selfheal.py --alarms-only` 是无风险的闹钟自检。
+`tools/watch_reboot.py --settle 180` 可以复现并监视整个过程；`tools/test_adb_selfheal.py --alarms-only` 是无风险的闹钟自检；`tools/cec_diag.py` 只读诊断电视的 HDMI-CEC / 输入源状态。
+
+---
+
+## HDMI-CEC 防切源
+
+电视通过 HDMI ARC/eARC 接功放时，功放随电视开机后可能发出 `Active Source`，把画面自动切到功放所在的 HDMI 输入，家长还得手动退出来。项目做了两层处理：
+
+- **设置层**：关闭系统里「通用设置 → 直接播放信号源」（对应全局键 `mitv.settings.db.video.auto_switch`）。CEC 总开关、`hdmi_control_auto_device_off_enabled`、系统音频控制与 ARC/eARC 音频都保留，所以功放仍会跟着电视开机并正常出声。这个键可能被系统还原，守护每次连上电视都会复查并写回 0。
+- **兜底层**：守护在重连后的保护窗口内每 12 秒读一次 `dumpsys hdmi_control` 的 `mActiveRoutingPath`。只要活动源不再是电视自己（非 `0x0000`），就自动发 HOME 回电视桌面，不需要手动退出。
+
+`tools/watch_cec_boot.py --wait 240` 会真实重启电视，逐次记录 ADB、CEC 活动源、功放电源状态和前台应用，用来验收这个行为。不需要就把 `cec_guard_enabled` 设为 `false`。
 
 ---
 
@@ -170,6 +189,8 @@ python tools/tv_quiz_daemon.py
 python tools/check_adb.py                        # ADB 通不通
 python tools/verify_live_gate.py --rounds 2      # 真机：连续两次进门都弹题 + 自动续播
 python tools/watch_reboot.py --wait 480 --settle 180   # 重启后 ADB 恢复全过程
+python tools/cec_diag.py                              # 只读诊断 CEC / 功放 / 输入源
+python tools/watch_cec_boot.py --wait 240             # 真实开机：功放联动 + 不自动切源
 ```
 
 `preview.html` 可以直接在电脑浏览器里看题、用方向键 + 回车模拟遥控器。

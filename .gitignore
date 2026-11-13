@@ -37,6 +37,8 @@ tools/*
 !tools/test_gate_e2e.py
 !tools/verify_live_gate.py
 !tools/inspect_bili_apps.py
+!tools/cec_diag.py
+!tools/watch_cec_boot.py
 
 # 电视端 Java 源码与 Manifest（便于直接阅读）
 !android/
