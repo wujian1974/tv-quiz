@@ -47,6 +47,11 @@ GATE_REQUIRE_CORRECT = bool(CONF.get("gate_require_correct", False))
 GATE_TIMEOUT = int(CONF.get("gate_timeout_seconds", 90))
 GATE_COOLDOWN = int(CONF.get("gate_cooldown_seconds", 0))
 GATE_LEAVE_GRACE = int(CONF.get("gate_leave_grace_seconds", 8))
+
+# 辅助模式：门禁已完全搬到电视端 APK 的 GateService（本地无障碍服务），
+# 不依赖 ADB，开机断线期也能拦住。电脑守护退居辅助，只保留 ADB 自愈、
+# 6095 拉起、CEC 防切源和状态记录，不再弹任何题（否则和电视端重复弹题）。
+ASSIST_ONLY = bool(CONF.get("tv_gate_full_control", False))
 RESUME_AFTER = bool(CONF.get("resume_after_quiz", True))
 PAUSE_ON_QUIZ = bool(CONF.get("pause_on_quiz", False))
 OFFLINE_ALERT = int(CONF.get("offline_alert_seconds", 90))
@@ -300,6 +305,9 @@ def pop_quiz(bank, history, index=None, gate=False, trigger="interval",
 
     gate=True 时是「进门闸门」：只要没作答且答题页不在前台，就不断把它拉回来。
     """
+    if ASSIST_ONLY:
+        # 辅助模式：门禁全交电视端 GateService，电脑端绝不弹题。
+        return None
     idx = index if index is not None else pick_index(bank, history)
     q = bank[idx]
     session = session or ("%d" % int(time.time() * 1000))
@@ -376,7 +384,11 @@ def main():
             return 0
 
     threshold = args.fast if args.fast else args.minutes * 60
-    gate_on = bool(CONF.get("gate_on_enter", True)) and not args.no_gate
+    gate_on = bool(CONF.get("gate_on_enter", True)) and not args.no_gate and not ASSIST_ONLY
+    if ASSIST_ONLY:
+        # 辅助模式不弹题：把计时阈值设成极大，主循环永不进入计时弹题分支。
+        # 门禁、计时全部由电视端 GateService 负责。
+        threshold = 10 ** 12
     bank = load_bank()
     if not bank:
         note("题库为空，请先运行 tools/build_questions.py 和 tools/build_tv_apk.py")
@@ -387,6 +399,9 @@ def main():
     except Exception:  # noqa: BLE001
         history = {}
 
+    if ASSIST_ONLY:
+        note("★ 辅助模式：门禁已全权交给电视端 GateService（本地无障碍，不依赖 ADB），"
+             "本守护只做 ADB 自愈/6095 拉起/CEC 防切源/状态记录，不弹任何题")
     note("守护启动：题库 %d 道，每 %d 秒一道，进门题=%s，续播=%s，B 站=%s，dry_run=%s"
          % (len(bank), threshold, gate_on, RESUME_AFTER,
             "/".join(BILI_PACKAGES), args.dry_run))
@@ -397,7 +412,8 @@ def main():
             CEC_GUARD, CEC_GUARD_WINDOW))
     online_at_start = connect()
     if online_at_start:
-        set_status("online", "电视已连接，进门闸门与计时题正常工作")
+        set_status("online", "辅助模式在线：门禁由电视端负责，本守护只保 ADB/CEC"
+                   if ASSIST_ONLY else "电视已连接，进门闸门与计时题正常工作")
         note("电视在线：" + TARGET)
         wake_keeper()
         ensure_cec_setting()
@@ -467,7 +483,8 @@ def main():
                 continue
             if offline_since is not None:
                 note("电视重新连上，等待 %.0f 秒" % (now - offline_since))
-                set_status("online", "电视已连接，进门闸门与 3 分钟计时题正常工作")
+                set_status("online", "辅助模式在线：门禁由电视端负责，本守护只保 ADB/CEC"
+                           if ASSIST_ONLY else "电视已连接，进门闸门与 3 分钟计时题正常工作")
                 offline_since = None
                 offline_alerted = False
                 last_tick = time.time()   # 别把离线时间算成观看时间

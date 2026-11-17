@@ -47,6 +47,8 @@ public class QuizActivity extends Activity {
     private String qid = "";
     private String stem = "";
     private String session = "";
+    private boolean localGate = false;   // 本地门禁服务弹的题，答完要回写状态
+    private boolean gateKind = false;    // true=进门题 false=计时题
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,6 +65,8 @@ public class QuizActivity extends Activity {
         session = getIntent().getStringExtra("q_session");
         if (session == null) session = "";
         final boolean gate = getIntent().getBooleanExtra("gate", false);
+        gateKind = gate;
+        localGate = getIntent().getBooleanExtra("local_gate", false);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -204,6 +208,18 @@ public class QuizActivity extends Activity {
         ed.putInt("right", sp.getInt("right", 0) + (ok ? 1 : 0));
         ed.apply();
 
+        // 本地门禁：答完即放行（对错都算，符合「答完才能看」的约定），
+        // 写回 gate_state，GateService 据此恢复播放并开始 3 分钟计时。
+        if (localGate) {
+            SharedPreferences gs = getSharedPreferences("gate_state", MODE_PRIVATE);
+            gs.edit()
+              .putBoolean("gate_ok", true)
+              .putLong("last_quiz_ms", System.currentTimeMillis())
+              .putString("last_qid", qid)
+              .apply();
+            Log.i(TAG, "本地门禁状态已回写：gate_ok=true, last_quiz_ms=now");
+        }
+
         Log.i(TAG, "RESULT|id=" + qid + "|picked=" + KEY[picked]
                 + "|right=" + KEY[rightIdx] + "|correct=" + (ok ? 1 : 0)
                 + "|session=" + session
@@ -234,6 +250,9 @@ public class QuizActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (localGate) {
+            try { GateService.notifyQuizClosed(this); } catch (Throwable ignored) {}
+        }
         super.onDestroy();
     }
 

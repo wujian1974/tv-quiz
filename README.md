@@ -2,33 +2,34 @@
 
 给家里的小米电视加一道「进门先答题」的闸门：孩子打开**云视听小电视**，先用遥控器做一道四选一，答完自动接着播放；之后每看 3 分钟再弹一道。
 
-不用装输入法、不用长篇输入，方向键移焦点、确定键选 ABCD 即可。题目来自孩子自己的错题本，加上按五年级上册教材进度补充的语文、数学、英语题，共 85 道。
+不用装输入法、不用长篇输入，方向键移焦点、确定键选 ABCD 即可。题目来自孩子自己的错题本，加上按五年级上册教材进度补充的语文、数学、英语题和阅读理解，共 97 道。
 
 ---
 
 ## 这是什么
 
-一台常开的电脑当服务器，通过**无线 ADB**盯着电视的前台应用；电视上装一个很小的自研 APK 负责显示题目和记录作答。两边都不需要 root，不需要 Android Studio，不需要 Gradle，也不需要联网云服务。
+门禁**完全跑在电视上**：电视上装一个自研 APK，其中含一个本地无障碍服务 `GateService`，它自己在电视端识别「孩子打开了云视听小电视」并弹出答题页。这样开机后 ADB 还没连上的那一两分钟里也拦得住，孩子没法靠「开机后抢先打开云视听」绕过去。电脑上的常驻守护退居辅助，只负责 ADB 自愈、6095 拉起、CEC 防切源和状态记录，**不弹题**。两边都不需要 root，不需要 Android Studio，不需要 Gradle，也不需要联网云服务。
 
 ```mermaid
 flowchart LR
-    A[电脑常驻守护<br/>tv_quiz_daemon.py] -- 无线 ADB 每 3 秒读前台包名 --> B[安卓电视]
-    B -- 前台 = 云视听小电视 --> A
-    A -- am start 拉起答题页 --> C[错题小测 APK<br/>QuizActivity]
-    C -- logcat RESULT|... --> A
-    A -- KEYCODE_MEDIA_PLAY --> B
+    G[电视端 GateService<br/>本地无障碍服务] -- 每3秒主动查前台窗口 --> T{前台是云视听?}
+    T -- 是且未答题 --> Q[弹本地答题页<br/>QuizActivity]
+    Q -- 答完写 gate_state --> G
+    G -- 满3分钟 --> Q
+    A[电脑辅助守护<br/>tv_quiz_daemon.py] -. 仅ADB自愈/CEC/状态 .-> T
 ```
 
 一次完整的流程：
 
-1. 守护发现前台切进 `com.xiaodianshi.tv.yst`（云视听小电视），设下「闸门」。
-2. 拉起全屏答题页；没作答就反复拉回前台（APK 里拦了返回键，主页键也绕不过去）。
-3. 孩子用遥控器选 A/B/C/D，结果写进 APK 的 logcat，守护抓回来存到 `answer_log.jsonl`。
-4. 放行，发一次播放键让节目**继续播**（不额外暂停），开始累计观看时间。
-5. 累计满 3 分钟再弹一道；退出云视听小电视就停表，回来重新计时。
-6. 抽题按「答错过的、久没见的优先」加权，选项每次打乱顺序并重算正确答案位置。
+1. `GateService` 每 3 秒用 `getRootInActiveWindow()` 查当前前台窗口包名，发现切进 `com.xiaodianshi.tv.yst`（云视听小电视）且没答过进门题，就弹全屏答题页。
+2. 答题页拦了返回键；孩子用遥控器选 A/B/C/D，答完把 `gate_ok=true`、`last_quiz_ms` 写进 APK 私有 SharedPreferences（`gate_state`）。
+3. 门禁看到状态回写，放行并恢复云视听播放；之后每满 3 分钟再弹一道计时题。
+4. 离开云视听超过 8 秒再回来，清掉进门标记，重新弹进门题。
+5. 抽题按「答错过的、久没见的优先」加权，选项每次打乱顺序并重算正确答案位置。
 
-另外，电视重启后系统常把「ADB 调试」关掉，导致整套机制静默失效。项目里做了三层自恢复，见下文 [ADB 自恢复](#adb-自恢复)。
+电视重启后无障碍设置若被系统清掉，`AdbKeeper` 会在开机广播和 20/60/120/180 秒自动把门禁服务重新追加回启用列表，不用人工干预。ADB 自恢复见下文 [ADB 自恢复](#adb-自恢复)。
+
+> 早期版本是电脑守护通过 ADB 全权检测弹题。实测发现：开机后先小米桌面→功放界面→Aerial 桌面，这一两分钟里 ADB 断线、电脑守护是瞎的，孩子抢先打开云视听就能绕过去。2026-11-17 改成电视端全管、电脑端退居辅助后，这个竞态漏洞被根治。
 
 ---
 
@@ -45,7 +46,7 @@ flowchart LR
 | `tools/cec_diag.py`、`watch_cec_boot.py` | HDMI-CEC 只读诊断、真实开机验收 |
 | `tools/verify_live_gate.py` 等 | 真机端到端验证（进门题、续播、遥控器） |
 | `android/` | 电视端 Java 源码与 `AndroidManifest.xml`，便于直接阅读 |
-| `questions.json` | 85 道四选一题库；`quiz_items.json` / `textbook_items.json` 是改造表 |
+| `questions.json` | 97 道四选一题库；`quiz_items.json` / `textbook_items.json` 是改造表 |
 | `preview.html` | 电脑上的题库预览页，方向键 + 回车可模拟遥控器 |
 | `config.example.json` | 配置样例（**复制成 `config.json` 后使用**） |
 | `windows/` | 三个通用 bat 模板，可直接放到项目根目录用 |
@@ -88,7 +89,7 @@ python tools/tv_quiz_daemon.py
 
 第一次 `adb connect` 时电视会弹「允许 USB 调试」，勾上「一律允许」并确认。
 
-想直接体验，**跳过第 2 步里的 `build_questions.py`**：仓库自带的 `questions.json` 已经包含 85 道题。只有想重新生成错题库部分时才需要运行 `tools/build_questions.py`，它会去读 `config.json` 里 `cards_dir` 指向的错题卡目录（这个目录属于私人数据，不随仓库公开）。
+想直接体验，**跳过第 2 步里的 `build_questions.py`**：仓库自带的 `questions.json` 已经包含 97 道题。只有想重新生成错题库部分时才需要运行 `tools/build_questions.py`，它会去读 `config.json` 里 `cards_dir` 指向的错题卡目录（这个目录属于私人数据，不随仓库公开）。
 
 ---
 
@@ -100,7 +101,8 @@ python tools/tv_quiz_daemon.py
 |---|---|---|
 | `tv_ip` | — | 电视地址 `<IP>:5555`，**必填** |
 | `bili_packages` | `["com.xiaodianshi.tv.yst"]` | 只对这些包名生效。注意 `com.bilibili.tv` 是另一个客户端，`com.chinasoul.bt` 是第三方 BT，需要的话自行加入 |
-| `interval_minutes` | `5` | 每隔几分钟弹一道 |
+| `interval_minutes` | `3` | 每隔几分钟弹一道（电视端 `GateService` 里是硬编码 3 分钟，改这里只影响电脑守护的旧逻辑） |
+| `tv_gate_full_control` | `true` | **门禁全交电视端**：本地 `GateService` 自己弹题，电脑守护退居辅助只做 ADB/CEC/状态，不弹题。这是根治「开机断线期绕开门禁」的关键开关；改成 `false` 回到纯电脑守护方案 |
 | `gate_on_enter` | `true` | 每次进入都先做一道题 |
 | `gate_cooldown_seconds` | `0` | 冷却按**上次答完题**算；调大（如 60）可避免短时间频繁进出反复弹题 |
 | `gate_leave_grace_seconds` | `8` | 连续离开不足 8 秒不算真离开，用来过滤启动画面、播放器切屏的抖动 |
@@ -114,7 +116,7 @@ python tools/tv_quiz_daemon.py
 | `cec_guard_enabled` | `true` | 防止功放开机把画面切到 HDMI 界面 |
 | `cec_guard_after_reconnect_seconds` | `600` | 重连后多长时间内开启防切源保护 |
 | `cec_guard_poll_seconds` | `12` | 检查 HDMI-CEC 活动源的间隔 |
-| `textbook_units` | 五上语文 1-4 / 数学 1-4 / 英语 Unit1-3 | 教材题按单元限定「已学到哪儿」，进度往前走就往里加 |
+| `textbook_units` | 五上语文 1-4 / 语文阅读理解 / 数学 1-4 / 英语 Unit1-3 | 教材题按单元限定「已学到哪儿」，进度往前走就往里加 |
 
 > 一个踩过的坑：冷却期原先按「上次离开」算，结果电视在 B 站和桌面之间来回切时这个时间被不断刷新，正经的进门反而永远不弹题。现在改成按「上次答完题」算，并默认冷却为 0。
 
@@ -122,7 +124,7 @@ python tools/tv_quiz_daemon.py
 
 ## 题库
 
-`questions.json` 共 85 道四选一：
+`questions.json` 共 97 道四选一：
 
 - **错题库 25 道**：原本是填空、计算、阅读、写话，逐题改造成 ABCD，干扰项优先取自孩子当初的真实错答；每题的 `opt_from` 字段记录了干扰项来源，方便家长抽查。
 - **教材补充 60 道**：语文 20、数学 20、英语 20，按五年级上册已学单元编写。
@@ -175,10 +177,12 @@ python tools/tv_quiz_daemon.py
 
 ## 已知限制
 
-- 依赖电脑常开、电视和电脑在同一局域网；断网或电脑关机时闸门不生效。
-- 这不是系统级家长控制，也不是防绕过方案：能进电视设置的人仍可以关掉 ADB 或卸载应用。
+- **门禁本身不依赖电脑常开**：电视端 `GateService` 本地拦截，电脑关掉、断网、开机 ADB 断线期都照样弹题。电脑守护只在辅助模式做 ADB 自愈、CEC 防切源和状态记录，它挂了不影响门禁。
+- 门禁依赖无障碍服务 enabled：若被系统或在设置里手动关掉，门禁失效。`AdbKeeper` 会在开机和 20/60/120/180 秒自动把它追加回启用列表兜底。
+- 这不是系统级家长控制，也不是防绕过方案：能进电视设置的人仍可以关掉无障碍服务或卸载应用。
 - 只针对 `bili_packages` 里列出的客户端；其他视频软件不拦截、不计时。
-- 依赖无线 ADB 与 `WRITE_SECURE_SETTINGS`，不同品牌/版本的电视可能需要调整接收器与授权方式。
+- `GateService` 依赖无障碍的「读取窗口内容」能力（`canRetrieveWindowContent`）；这台小米电视实测可用，个别机型可能不授予该能力，需要在真机上验证 `dumpsys accessibility` 里 capabilities 是否含 `CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT`（值为 1）。
+- 依赖 `WRITE_SECURE_SETTINGS`（ADB 自恢复和门禁自启用都要），不同品牌/版本的电视可能需要调整接收器与授权方式。
 - `AdbKeeper` 依赖开机广播能被送到；若应用刚重装、开机时还在补做 dexopt，可能赶不上广播，此时由守护唤醒 + 5 分钟自检兜底。
 
 ---

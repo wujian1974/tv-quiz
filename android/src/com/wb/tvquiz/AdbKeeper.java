@@ -26,6 +26,10 @@ public class AdbKeeper extends BroadcastReceiver {
     public void onReceive(Context c, Intent i) {
         String act = (i == null) ? "" : String.valueOf(i.getAction());
         log(c, "onReceive action=" + act);
+        // 门禁已搬到电视端本地无障碍服务 GateService。开机后必须确保它仍被启用，
+        // 否则开机阶段 ADB 断线时就没门禁了。和 ADB 开关一样，分多次触发补写，
+        // 覆盖开机初期系统可能把设置清掉的窗口。
+        ensureGateAccessibility(c);
         if (ACTION_SELFTEST.equals(act)) {
             selftest(c);
         } else {
@@ -73,6 +77,33 @@ public class AdbKeeper extends BroadcastReceiver {
         }
         log(c, why + " | FIX before=" + before + " putInt=" + api
                 + " after=" + read(c));
+    }
+
+    /**
+     * 确保电视端门禁无障碍服务被启用。
+     * 只往 enabled_accessibility_services 里追加自己的组件，绝不覆盖 Aerial 桌面守护、
+     * 语音、karaoke 等其它服务（它们是冒号分隔的多个组件）。用 Settings.Secure API
+     * （已授予 WRITE_SECURE_SETTINGS），不用 settings 命令（会被 SELinux 拒绝）。
+     */
+    private static void ensureGateAccessibility(Context c) {
+        String key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES;
+        String self = c.getPackageName() + "/.GateService";
+        try {
+            String cur = Settings.Secure.getString(c.getContentResolver(), key);
+            if (cur == null) cur = "";
+            if (cur.contains("com.wb.tvquiz/.GateService")
+                    || cur.contains("com.wb.tvquiz/com.wb.tvquiz.GateService")) {
+                log(c, "门禁无障碍服务已在启用列表，无需重复写");
+            } else {
+                String next = cur.isEmpty() ? self : cur + ":" + self;
+                Settings.Secure.putString(c.getContentResolver(), key, next);
+                log(c, "已追加门禁无障碍服务: " + self);
+            }
+            Settings.Secure.putInt(c.getContentResolver(),
+                    Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+        } catch (Throwable e) {
+            log(c, "ensureGateAccessibility FAILED: " + e);
+        }
     }
 
     /** 不改状态，只验证权限够不够、广播通不通。 */

@@ -6,6 +6,7 @@
   ],
   "interval_minutes": 3,
   "poll_seconds": 3,
+  "tv_gate_full_control": true,
   "gate_on_enter": true,
   "gate_cooldown_seconds": 0,
   "gate_leave_grace_seconds": 8,
@@ -26,6 +27,7 @@
     "五上数学1-4单元",
     "五上英语Unit1-3"
   ],
+  "_note_tv_gate": "tv_gate_full_control=true：门禁完全交给电视端 APK 的本地无障碍服务 GateService，它在电视端自己识别云视听并弹题，不依赖电脑和 ADB，所以开机后 ADB 断线的那几十秒也拦得住。此时电脑守护退居辅助，只做 ADB 自愈、6095 拉起、CEC 防切源和状态记录，绝不弹题（否则会和电视端重复弹）。若电视端门禁没装或想回到纯电脑守护方案，把它改成 false。安装电视端门禁：重新构建安装 APK 后，把 com.wb.tvquiz/.GateService 追加到 settings put secure enabled_accessibility_services 即可，服务配置在 res/xml/accessibility_service_config.xml，必须含 canRetrieveWindowContent=true，且代码里不能调用 setServiceInfo() 覆盖它。",
   "_note_bili": "云视听小电视的真实包名是 com.xiaodianshi.tv.yst（aapt 读到应用名「云视听小电视」1.8.9）。之前误填的 com.bilibili.tv 应用名其实是「哔哩哔哩」1.6.6，是另一个官方 TV 客户端；com.chinasoul.bt 叫「BT」，是第三方客户端。按用户要求只认云视听小电视；若小朋友也会开另外两个，把包名加进 bili_packages 即可。",
   "_note_gate": "gate_on_enter：从别的应用切进云视听小电视时，先弹一道题，没作答就把答题页反复拉回前台，答完才放行并开始计时。gate_cooldown_seconds=0：每次真正进入都弹题；冷却按「上次答完题」算，不再按「上次离开」算（后者被来回切换不断刷新，2026-11-12 实测会导致进门不弹题，已修）；若觉得太频繁可改大，例如 60。gate_leave_grace_seconds=8：连续离开不足 8 秒不算真离开，用来过滤启动画面、播放器切屏的抖动，避免每答完一道题就又设闸。gate_require_correct：默认 false，答完就放行；改成 true 则必须答对才放行（最多换 3 道题）。",
   "_note_resume": "pause_on_quiz=false：不额外发暂停键，切到答题页时播放器自己会停。resume_after_quiz=true：答题页关闭、回到云视听小电视后自动发播放键续播。",
