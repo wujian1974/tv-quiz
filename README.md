@@ -152,8 +152,8 @@ python tools/tv_quiz_daemon.py
 
 电视通过 HDMI ARC/eARC 接功放时，功放随电视开机后可能发出 `Active Source`，把画面自动切到功放所在的 HDMI 输入，家长还得手动退出来。项目做了两层处理：
 
-- **设置层**：关闭系统里「通用设置 → 直接播放信号源」（对应全局键 `mitv.settings.db.video.auto_switch`）。CEC 总开关、`hdmi_control_auto_device_off_enabled`、系统音频控制与 ARC/eARC 音频都保留，所以功放仍会跟着电视开机并正常出声。这个键可能被系统还原，守护每次连上电视都会复查并写回 0。
-- **兜底层**：守护在重连后的保护窗口内每 12 秒读一次 `dumpsys hdmi_control` 的 `mActiveRoutingPath`。只要活动源不再是电视自己（非 `0x0000`），就自动发 HOME 回电视桌面，不需要手动退出。
+- **设置层**：关闭系统里「通用设置 → 直接播放信号源」（对应全局键 `mitv.settings.db.video.auto_switch`）。CEC 总开关、`hdmi_control_auto_device_off_enabled`、系统音频控制与 ARC/eARC 音频都保留，所以功放仍会跟着电视开机并正常出声。这个键会被系统开机流程在 20/60/120/180 秒写回 1，守护在重连后的保护窗口内每 12 秒复查一次、写回 0，压住功放自动切源，避免画面卡在功放界面（纯设置操作，无感）。
+- **兜底层**：守护同时每 12 秒读一次 `dumpsys hdmi_control` 的 `mActiveRoutingPath`。只要活动源不再是电视自己（非 `0x0000`），就发 HOME 回电视桌面——但带 30 秒冷却，且检测到正在云视听/答题时绝不按，既不长卡功放界面，也不把看片的孩子踢回桌面。
 
 `tools/watch_cec_boot.py --wait 240` 会真实重启电视，逐次记录 ADB、CEC 活动源、功放电源状态和前台应用，用来验收这个行为。不需要就把 `cec_guard_enabled` 设为 `false`。
 
