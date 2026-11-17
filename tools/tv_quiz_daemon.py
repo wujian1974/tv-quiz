@@ -204,6 +204,31 @@ def ensure_cec_setting():
         note("「直接播放信号源」被还原为 %s，已重新关掉" % cur)
 
 
+GATE_COMP = "com.wb.tvquiz/.GateService"
+
+
+def ensure_gate_accessibility():
+    """确保电视端门禁无障碍服务仍在启用列表；被系统清掉就写回，不覆盖其它服务。
+
+    这是电视端 AdbKeeper 之外的第二道保险：辅助模式守护只要连上 ADB，就定期
+    复查一次。开机待机唤醒时门禁服务可能被系统从启用列表移除，而那条路径走的
+    是 QuizActivity.kick()（已在 APK 端修复）。这里再用 ADB 兜一层，双保险。
+    """
+    try:
+        cur = shell("settings get secure enabled_accessibility_services",
+                    timeout=10).strip()
+        if GATE_COMP in cur:
+            return
+        # 只追加自己的组件，保留 Aerial 桌面、语音、karaoke 等其它服务
+        nxt = (cur + ":" + GATE_COMP).strip(":")
+        shell("settings put secure enabled_accessibility_services '%s'" % nxt,
+              timeout=10)
+        shell("settings put secure accessibility_enabled 1", timeout=10)
+        note("门禁无障碍服务被清掉，已通过 ADB 写回（双保险）")
+    except Exception as e:  # noqa: BLE001
+        note("门禁无障碍复查失败：%s" % e)
+
+
 def cec_routing_path():
     """返回 HDMI-CEC 当前活动路由；0x0000 表示电视自己，非 0 是外部设备。"""
     out = shell("dumpsys hdmi_control | grep mActiveRoutingPath | head -n 1",
@@ -436,6 +461,7 @@ def main():
     reconnected_at = time.time() if online_at_start else 0.0
     last_cec_check = 0.0      # 上次查 HDMI-CEC 活动源的时间
     last_cec_home = 0.0       # 上次按主页键的时间：30 秒冷却，防止把孩子反复踢回桌面
+    last_gate_check = 0.0     # 上次复查门禁无障碍服务的时间（辅助模式双保险）
     in_bili = False           # 是否处在这一次「看 B 站」的会话里
     last_exit = 0.0           # 上次真正离开 B 站的时间
     leave_since = 0.0         # 连续离开的起点（宽限期内不算真离开）
@@ -490,6 +516,7 @@ def main():
                 last_tick = time.time()   # 别把离线时间算成观看时间
                 wake_keeper()             # 刚开机回来，立刻排好自检闹钟
                 ensure_cec_setting()      # 开机可能把「直接播放信号源」还原，写回关
+                ensure_gate_accessibility()  # 双保险：确认门禁服务仍在无障碍列表
                 last_wake = now
                 reconnected_at = now      # 开机/唤醒后的 CEC 保护窗口从这里起算
                 last_cec_check = 0.0
@@ -505,6 +532,13 @@ def main():
             if now - last_wake >= 600:    # 每 10 分钟保活一次，防止闹钟链断掉
                 wake_keeper()
                 last_wake = now
+
+            # 辅助模式双保险：每 60 秒确认门禁无障碍服务仍在启用列表。
+            # 电视端 AdbKeeper 已负责恢复，这里只在它被系统清掉时补写，防止
+            # 开机/待机唤醒后门禁静默失效（正是本次修复的场景）。
+            if ASSIST_ONLY and not args.dry_run and now - last_gate_check >= 60:
+                last_gate_check = now
+                ensure_gate_accessibility()
 
             # 防 CEC 自动切源，两件事分开做：
             # 1) 「直接播放信号源」要持续保持关——系统开机流程会在 20/60/120/180 秒

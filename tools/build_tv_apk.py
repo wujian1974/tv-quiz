@@ -142,7 +142,15 @@ public class AdbKeeper extends BroadcastReceiver {
     /** 答题页每次启动都续一次命；守护每 5 分钟弹题 = 每 5 分钟续一次。 */
     public static void kick(Context c) {
         log(c, "kick from QuizActivity");
+        // 关键：开机/待机唤醒后是本方法（QuizActivity 裸启动）被触发，而不是
+        // BOOT_COMPLETED 广播。此前这里只恢复 ADB 开关，漏了门禁无障碍服务，
+        // 导致门禁服务被系统清掉后开机不恢复 —— 必须在这里也补写。
+        ensureGateAccessibility(c);
         checkAndFix(c, "quiz-start");
+        // 开机后 Aerial 桌面守护会重新注册无障碍服务，可能把门禁从列表里挤掉。
+        // 20/60 秒再补写两次，覆盖这个窗口；链式 300 秒继续兜底。
+        schedule(c, 20);
+        schedule(c, 60);
         schedule(c, 300);
     }
 
