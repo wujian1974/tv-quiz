@@ -52,6 +52,19 @@ public class GateService extends AccessibilityService {
         // 关键是不能在这里调用 setServiceInfo()——那会用代码里的 info 覆盖 XML 配置，
         // 导致系统判定 capabilities=0、getRootInActiveWindow() 永远返回 null。
         Log.i(TAG, "GateService connected (主动轮询版), watching " + PKG_BILI);
+
+        // 关键修复：服务每次 connected（开机/待机唤醒后都会重新连接）时，清掉上一次
+        // 会话遗留的门禁状态。否则昨晚答完题 gate_ok=true 会跨夜保留，今早开机进
+        // 云视听被当成「已答过」直接放行——正是用户反馈的开机后不弹题。开机就是新
+        // 的一次观看，必须重新答进门题。
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean("gate_ok", false).apply();
+        currentFront = "";        // 重置前台标记，让下次进入云视听能触发 onEnterBili
+        lastSeenBili = 0L;
+        lastPopup = 0L;
+        quizOnScreen = false;
+        Log.i(TAG, "已清除跨会话门禁状态，下次进云视听需重新答进门题");
+
         handler.post(ticker);
     }
 
