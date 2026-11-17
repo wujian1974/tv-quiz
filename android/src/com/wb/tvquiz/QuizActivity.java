@@ -52,6 +52,14 @@ public class QuizActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         AdbKeeper.kick(this);   // 顺手给 ADB 自恢复续命，不改变界面
+        // 只有守护带着 q_index 拉起时才是真正的出题；开机的 6095 通道只传包名、
+        // 裸启动本应用（目的是触发 AdbKeeper 写回 ADB 开关），这种情况不弹题、
+        // 直接结束，避免「一开机就让你做题」。桌面图标手动点开同理。
+        if (!getIntent().hasExtra("q_index")) {
+            Log.i(TAG, "silent launch (no q_index): ADB keeper only, no quiz UI");
+            finish();
+            return;
+        }
         session = getIntent().getStringExtra("q_session");
         if (session == null) session = "";
         final boolean gate = getIntent().getBooleanExtra("gate", false);

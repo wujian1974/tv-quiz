@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""电脑端守护脚本：盯着小米电视，进云视听小电视先答题，之后每 5 分钟再弹一道。
+"""电脑端守护脚本：盯着小米电视，进云视听小电视先答题，之后每 3 分钟再弹一道。
 
 用法：
   python tools/tv_quiz_daemon.py                 正式跑（读 config.json）
@@ -419,6 +419,7 @@ def main():
     # 守护启动时就在线，也算一个「开机/刚连上」的会话起点，同样给一段防切源保护窗口
     reconnected_at = time.time() if online_at_start else 0.0
     last_cec_check = 0.0      # 上次查 HDMI-CEC 活动源的时间
+    cec_home_sent = False     # 本次重连窗口内是否已按过主页键（只按一次，别反复踢回桌面）
     in_bili = False           # 是否处在这一次「看 B 站」的会话里
     last_exit = 0.0           # 上次真正离开 B 站的时间
     leave_since = 0.0         # 连续离开的起点（宽限期内不算真离开）
@@ -466,7 +467,7 @@ def main():
                 continue
             if offline_since is not None:
                 note("电视重新连上，等待 %.0f 秒" % (now - offline_since))
-                set_status("online", "电视已连接，进门闸门与 5 分钟计时题正常工作")
+                set_status("online", "电视已连接，进门闸门与 3 分钟计时题正常工作")
                 offline_since = None
                 offline_alerted = False
                 last_tick = time.time()   # 别把离线时间算成观看时间
@@ -475,6 +476,7 @@ def main():
                 last_wake = now
                 reconnected_at = now      # 开机/唤醒后的 CEC 保护窗口从这里起算
                 last_cec_check = 0.0
+                cec_home_sent = False     # 允许本次开机再按一次主页键
             if revive_pending:
                 # 为恢复 ADB 拉起的应用会显示一道没有 session 的空白题，收掉它，
                 # 免得挡着用户；只有前台确实还是答题页时才发 HOME。
@@ -490,14 +492,22 @@ def main():
             # 防 CEC 自动切源：功放开机发 Active Source 会把活动源抢到它的 HDMI 口，
             # 这时按一次主页键回到电视自己的界面。只在重连后的窗口内生效，
             # 且只在活动源确实不是电视自己时才动手，平时完全不干预。
+            # 整个窗口只按一次：功放会持续发信号，反复按会把刚进云视听的孩子踢回桌面。
             if (CEC_GUARD and not args.dry_run and reconnected_at
+                    and not cec_home_sent
                     and now - reconnected_at <= CEC_GUARD_WINDOW
                     and now - last_cec_check >= CEC_GUARD_POLL):
                 last_cec_check = now
                 path = cec_routing_path()
                 if path and path.lower() not in ("0x0000", "0x0"):
-                    note("CEC 把活动源切到外接设备（routing=%s），自动回电视桌面" % path)
-                    shell("input keyevent 3")
+                    # 用户已经在看视频或答题，就别按了，免得打断
+                    fg_now = foreground()
+                    if fg_now not in BILI_PACKAGES and fg_now != QUIZ_PKG:
+                        note("CEC 把活动源切到外接设备（routing=%s），按一次主页键回电视桌面" % path)
+                        shell("input keyevent 3")
+                    else:
+                        note("CEC 活动源为外接设备（routing=%s），但正在看视频/答题，不打扰" % path)
+                    cec_home_sent = True
 
             fg = foreground()
             watching = fg in BILI_PACKAGES

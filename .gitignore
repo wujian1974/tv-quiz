@@ -71,3 +71,6 @@ tmp_labels/
 apk/
 apk-smoke/
 __pycache__/
+
+# 本地回退备份（含内网 config、APK、截图等，绝不上库）
+rollback-backup-*/
