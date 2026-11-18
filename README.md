@@ -115,7 +115,7 @@ python tools/tv_quiz_daemon.py
 | `adb_revive_retry_seconds` | `60` | 6095 拉起重试间隔 |
 | `cec_guard_enabled` | `true` | 防止功放开机把画面切到 HDMI 界面 |
 | `cec_guard_after_reconnect_seconds` | `600` | 重连后多长时间内开启防切源保护 |
-| `cec_guard_poll_seconds` | `12` | 检查 HDMI-CEC 活动源的间隔 |
+| `cec_guard_poll_seconds` | `12` | 检查「直接播放信号源」设置的间隔 |
 | `textbook_units` | 五上语文 1-4 / 语文阅读理解 / 数学 1-4 / 英语 Unit1-3 | 教材题按单元限定「已学到哪儿」，进度往前走就往里加 |
 
 > 一个踩过的坑：冷却期原先按「上次离开」算，结果电视在 B 站和桌面之间来回切时这个时间被不断刷新，正经的进门反而永远不弹题。现在改成按「上次答完题」算，并默认冷却为 0。
@@ -152,10 +152,10 @@ python tools/tv_quiz_daemon.py
 
 ## HDMI-CEC 防切源
 
-电视通过 HDMI ARC/eARC 接功放时，功放随电视开机后可能发出 `Active Source`，把画面自动切到功放所在的 HDMI 输入，家长还得手动退出来。项目做了两层处理：
+电视通过 HDMI ARC/eARC 接功放时，功放随电视开机后可能发出 `Active Source`，把画面自动切到功放所在的 HDMI 输入，家长还得手动退出来。项目的处理方式是关掉系统里「通用设置 → 直接播放信号源」：
 
 - **设置层**：关闭系统里「通用设置 → 直接播放信号源」（对应全局键 `mitv.settings.db.video.auto_switch`）。CEC 总开关、`hdmi_control_auto_device_off_enabled`、系统音频控制与 ARC/eARC 音频都保留，所以功放仍会跟着电视开机并正常出声。这个键会被系统开机流程在 20/60/120/180 秒写回 1，守护在重连后的保护窗口内每 12 秒复查一次、写回 0，压住功放自动切源，避免画面卡在功放界面（纯设置操作，无感）。
-- **兜底层**：守护同时每 12 秒读一次 `dumpsys hdmi_control` 的 `mActiveRoutingPath`。只要活动源不再是电视自己（非 `0x0000`），就发 HOME 回电视桌面——但带 30 秒冷却，且检测到正在云视听/答题时绝不按，既不长卡功放界面，也不把看片的孩子踢回桌面。
+- ~~**兜底层**：读 `mActiveRoutingPath`，非 `0x0000` 就发 HOME 回桌面~~ —— **已移除**。实测 eARC 接功放时，功放作为音频设备常年占据 CEC active source，`mActiveRoutingPath` 恒为 `0x2000`（外接设备），并不代表画面被切走。守护据此每 30 秒按一次 HOME，把正常看 BT/直播的用户反复踢回桌面（先闪小米桌面、再被 Aerial 接管）。防切源靠设置层 `auto_switch=0` 已足够，Aerial 桌面自己也会接管 HOME，故彻底不再由守护按主页键。
 
 `tools/watch_cec_boot.py --wait 240` 会真实重启电视，逐次记录 ADB、CEC 活动源、功放电源状态和前台应用，用来验收这个行为。不需要就把 `cec_guard_enabled` 设为 `false`。
 

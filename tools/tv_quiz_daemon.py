@@ -229,14 +229,6 @@ def ensure_gate_accessibility():
         note("门禁无障碍复查失败：%s" % e)
 
 
-def cec_routing_path():
-    """返回 HDMI-CEC 当前活动路由；0x0000 表示电视自己，非 0 是外部设备。"""
-    out = shell("dumpsys hdmi_control | grep mActiveRoutingPath | head -n 1",
-                timeout=12)
-    m = re.search(r"0x[0-9a-fA-F]+", out)
-    return m.group(0) if m else ""
-
-
 def wake_keeper():
     """唤醒电视端 APK，让它排好 20/60/120/180 秒的 ADB 自检闹钟。
 
@@ -459,8 +451,7 @@ def main():
     revive_pending = False    # 刚拉起应用，恢复在线后要收掉临时答题页
     # 守护启动时就在线，也算一个「开机/刚连上」的会话起点，同样给一段防切源保护窗口
     reconnected_at = time.time() if online_at_start else 0.0
-    last_cec_check = 0.0      # 上次查 HDMI-CEC 活动源的时间
-    last_cec_home = 0.0       # 上次按主页键的时间：30 秒冷却，防止把孩子反复踢回桌面
+    last_cec_check = 0.0      # 上次复查 HDMI-CEC「直接播放信号源」设置的时间
     last_gate_check = 0.0     # 上次复查门禁无障碍服务的时间（辅助模式双保险）
     in_bili = False           # 是否处在这一次「看 B 站」的会话里
     last_exit = 0.0           # 上次真正离开 B 站的时间
@@ -520,7 +511,6 @@ def main():
                 last_wake = now
                 reconnected_at = now      # 开机/唤醒后的 CEC 保护窗口从这里起算
                 last_cec_check = 0.0
-                last_cec_home = 0.0       # 重连后重新允许按主页键（开机回桌面）
             if revive_pending:
                 # 为恢复 ADB 拉起的应用会显示一道没有 session 的空白题，收掉它，
                 # 免得挡着用户；只有前台确实还是答题页时才发 HOME。
@@ -540,27 +530,21 @@ def main():
                 last_gate_check = now
                 ensure_gate_accessibility()
 
-            # 防 CEC 自动切源，两件事分开做：
-            # 1) 「直接播放信号源」要持续保持关——系统开机流程会在 20/60/120/180 秒
-            #    把它写回 1，只在重连那一刻写一次会扑空，之后功放就自动切源、卡在功放界面。
-            #    这里在保护窗口内每轮复查写回，是纯设置操作、无感，不影响看片。
-            # 2) 活动源真被抢到外接设备时按主页键回桌面，但 30 秒冷却 + 看片/答题不按，
-            #    既不长时间卡在功放界面，也不会把刚进云视听的孩子反复踢回桌面。
+            # 防 CEC 自动切源：只做「复查 auto_switch 写回 0」这一件无感的事。
+            # 系统开机流程会在 20/60/120/180 秒把它写回 1，只在重连那一刻写一次会扑空，
+            # 之后功放就自动切源、卡在功放界面；所以保护窗口内每轮复查写回，纯设置操作。
+            #
+            # 【重要修正】此前这里还会读 mActiveRoutingPath，非 0x0000 就按 HOME 回桌面。
+            # 实测这是错的：eARC 接功放时，功放作为音频设备常年占据 CEC active source，
+            # routing 恒为 0x2000（外接设备），并不代表画面被切走。守护据此每 30 秒按一次
+            # HOME，把正常看 BT/直播的用户反复踢回桌面（按 HOME 先闪小米桌面，再被 Aerial
+            # 接管，正好是用户看到的循环）。故彻底去掉按 HOME 的操作——防切源靠
+            # auto_switch=0 已足够，Aerial 桌面自己也会接管 HOME，不需要也不该由守护按键。
             if (CEC_GUARD and not args.dry_run and reconnected_at
                     and now - reconnected_at <= CEC_GUARD_WINDOW
                     and now - last_cec_check >= CEC_GUARD_POLL):
                 last_cec_check = now
-                ensure_cec_setting()      # 每轮复查，压住开机流程写回 1
-                path = cec_routing_path()
-                if path and path.lower() not in ("0x0000", "0x0"):
-                    # 用户已经在看视频或答题，就别按了，免得打断
-                    fg_now = foreground()
-                    if fg_now not in BILI_PACKAGES and fg_now != QUIZ_PKG:
-                        if now - last_cec_home >= 30:
-                            note("CEC 把活动源切到外接设备（routing=%s），按主页键回电视桌面" % path)
-                            shell("input keyevent 3")
-                            last_cec_home = now
-                    # else: 正在看视频/答题，保持不打扰
+                ensure_cec_setting()      # 复查 auto_switch，被还原为 1 就写回 0
 
             fg = foreground()
             watching = fg in BILI_PACKAGES
