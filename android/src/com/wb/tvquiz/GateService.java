@@ -59,6 +59,13 @@ public class GateService extends AccessibilityService {
         @Override
         public void run() {
             try { onTick(); } catch (Throwable t) { Log.e(TAG, "tick error", t); }
+            // 电视端持续锁住「直接播放信号源」=0：系统开机流程会把 auto_switch
+            // 写回 1，这里是端上最后一道防线，不依赖电脑守护(开机断线期它连不上)。
+            // AdbKeeper.ensureAutoSwitchOff 内部判断已是 0 就不写，开销极小。
+            if (ticks % 4 == 0) {   // 每 4 个 tick ≈ 12 秒复查一次，和电脑守护节奏一致
+                try { AdbKeeper.ensureAutoSwitchOff(GateService.this); }
+                catch (Throwable t) { Log.e(TAG, "auto_switch recheck error", t); }
+            }
             handler.postDelayed(this, 3000);   // 每 3 秒轮询一次前台窗口
         }
     };

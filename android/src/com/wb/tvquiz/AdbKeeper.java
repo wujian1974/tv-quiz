@@ -21,6 +21,10 @@ public class AdbKeeper extends BroadcastReceiver {
     private static final String TAG = "TVQuizAdb";
     public static final String ACTION_KEEP = "com.wb.tvquiz.ADB_KEEP";
     public static final String ACTION_SELFTEST = "com.wb.tvquiz.ADB_SELFTEST";
+    // 小米私有全局键「直接播放信号源」(One Touch Play)：外接设备(HDMI 功放)一通电/有信号，
+    // 电视就自动切到那个 HDMI 口。开机时系统会把它写回 1，导致画面卡在 HDMI 输入源界面、
+    // 把 Aerial 桌面顶掉。这里在电视端开机阶段就锁成 0，不依赖电脑守护(开机断线期它瞎着)。
+    private static final String KEY_AUTO_SWITCH = "mitv.settings.db.video.auto_switch";
 
     @Override
     public void onReceive(Context c, Intent i) {
@@ -30,6 +34,7 @@ public class AdbKeeper extends BroadcastReceiver {
         // 否则开机阶段 ADB 断线时就没门禁了。和 ADB 开关一样，分多次触发补写，
         // 覆盖开机初期系统可能把设置清掉的窗口。
         ensureGateAccessibility(c);
+        ensureAutoSwitchOff(c);   // 锁住「直接播放信号源」为 0，防开机切到 HDMI 界面
         if (ACTION_SELFTEST.equals(act)) {
             selftest(c);
         } else {
@@ -58,6 +63,7 @@ public class AdbKeeper extends BroadcastReceiver {
         // BOOT_COMPLETED 广播。此前这里只恢复 ADB 开关，漏了门禁无障碍服务，
         // 导致门禁服务被系统清掉后开机不恢复 —— 必须在这里也补写。
         ensureGateAccessibility(c);
+        ensureAutoSwitchOff(c);   // 待机唤醒走 kick 路径，这里也要锁 auto_switch
         checkAndFix(c, "quiz-start");
         // 开机后 Aerial 桌面守护会重新注册无障碍服务，可能把门禁从列表里挤掉。
         // 20/60 秒再补写两次，覆盖这个窗口；链式 300 秒继续兜底。
@@ -111,6 +117,24 @@ public class AdbKeeper extends BroadcastReceiver {
                     Settings.Secure.ACCESSIBILITY_ENABLED, 1);
         } catch (Throwable e) {
             log(c, "ensureGateAccessibility FAILED: " + e);
+        }
+    }
+
+    /**
+     * 把小米私有键「直接播放信号源」锁成 0：HDMI 上的设备(功放)通电/有信号时，
+     * 电视不再自动切到那个 HDMI 口，从而保住 Aerial 桌面。
+     * 这是纯设置写入，不动 CEC 总开关、不动 eARC，功放照常联动开机、声音照常回传。
+     * 值和电脑守护保持一致用字符串 "0"（该键在小米上是字符串类型）。
+     */
+    public static void ensureAutoSwitchOff(Context c) {
+        try {
+            String cur = Settings.Global.getString(c.getContentResolver(), KEY_AUTO_SWITCH);
+            if ("0".equals(cur)) return;   // 已经是 0，不写、不刷日志
+            Settings.Global.putString(c.getContentResolver(), KEY_AUTO_SWITCH, "0");
+            String after = Settings.Global.getString(c.getContentResolver(), KEY_AUTO_SWITCH);
+            log(c, "auto_switch 锁回 0 | before=" + cur + " after=" + after);
+        } catch (Throwable e) {
+            log(c, "ensureAutoSwitchOff FAILED: " + e);
         }
     }
 
