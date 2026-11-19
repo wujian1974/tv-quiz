@@ -156,6 +156,7 @@ python tools/tv_quiz_daemon.py
 
 - **设置层**：关闭系统里「通用设置 → 直接播放信号源」（对应全局键 `mitv.settings.db.video.auto_switch`）。CEC 总开关、`hdmi_control_auto_device_off_enabled`、系统音频控制与 ARC/eARC 音频都保留，所以功放仍会跟着电视开机并正常出声。这个键会被系统开机流程在 20/60/120/180 秒写回 1，守护在重连后的保护窗口内每 12 秒复查一次、写回 0，压住功放自动切源，避免画面卡在功放界面（纯设置操作，无感）。
 - ~~**兜底层**：读 `mActiveRoutingPath`，非 `0x0000` 就发 HOME 回桌面~~ —— **已移除**。实测 eARC 接功放时，功放作为音频设备常年占据 CEC active source，`mActiveRoutingPath` 恒为 `0x2000`（外接设备），并不代表画面被切走。守护据此每 30 秒按一次 HOME，把正常看 BT/直播的用户反复踢回桌面（先闪小米桌面、再被 Aerial 接管）。防切源靠设置层 `auto_switch=0` 已足够，Aerial 桌面自己也会接管 HOME，故彻底不再由守护按主页键。
+- **开机回桌面兜底（电视端 `GateService`，2026-11-20 新增）**：设置层偶尔压不住，开机后画面仍可能停在 HDMI 输入源全屏界面（包名 `com.xiaomi.eetv.home`，与小米桌面同包）。电视端门禁服务在每次重连后的 6 分钟看护窗口内，若发现前台连续卡在这个包超过 20 秒、且用户没主动打开任何应用，会用无障碍的 `GLOBAL_ACTION_HOME` 按一次 HOME 让 Aerial 接管；最多按 3 次、间隔 15 秒，进 Aerial 或到窗口末尾即结束。看云视听/BT/直播时前台是各自的包（连续 3 个 tick 判定），看护立即放弃，绝不打扰正常观看。优先由 Aerial 自己的 HomeGuard 恢复（实测约 12 秒），只有它没恢复、卡满 20 秒才由这道兜底出手。因为走的是电视端无障碍，与电脑无关，开机断线期也有效。
 
 `tools/watch_cec_boot.py --wait 240` 会真实重启电视，逐次记录 ADB、CEC 活动源、功放电源状态和前台应用，用来验收这个行为。不需要就把 `cec_guard_enabled` 设为 `false`。
 
